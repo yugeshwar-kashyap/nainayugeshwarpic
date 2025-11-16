@@ -1,0 +1,592 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>🔒 Private Photo-Video Gallery</title>
+    
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 0;
+            background-color: #f4f4f4;
+        }
+
+        header {
+            background-color: #333;
+            color: white;
+            padding: 20px;
+            text-align: center;
+        }
+
+        #contentWrapper {
+            display: none; 
+        }
+
+        .gallery-container {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); 
+            gap: 15px;
+            padding: 20px;
+        }
+
+        .gallery-item {
+            background-color: white;
+            border: 1px solid #ccc;
+            border-radius: 5px;
+            overflow: hidden;
+            box-shadow: 2px 2px 5px rgba(0,0,0,0.1);
+            position: relative;
+            cursor: pointer;
+        }
+        
+        /* 🚫 स्क्रीनशॉट/सेविंग रोकथाम प्रयास */
+        .gallery-item img,
+        .gallery-item video,
+        #modalMedia,
+        #modalVideo {
+            width: 100%;
+            height: 200px; 
+            object-fit: cover; 
+            display: block;
+            loading: lazy; 
+            
+            user-select: none;
+            -webkit-user-select: none; 
+            -moz-user-select: none;
+            -ms-user-select: none;
+            pointer-events: auto; 
+        }
+        
+        /* 🖼️ Buttons on Thumbnails (Download & Delete) */
+        .download-btn, .delete-btn {
+            position: absolute;
+            top: 5px;
+            background-color: rgba(0, 0, 0, 0.7);
+            color: white;
+            border: none;
+            padding: 5px 10px;
+            cursor: pointer;
+            border-radius: 3px;
+            font-size: 14px;
+            opacity: 0; 
+            transition: opacity 0.3s;
+            text-decoration: none;
+            z-index: 10;
+        }
+        
+        .download-btn { right: 5px; }
+        .delete-btn { 
+            left: 5px;
+            background-color: rgba(255, 0, 0, 0.7); 
+        }
+
+        .gallery-item:hover .download-btn,
+        .gallery-item:hover .delete-btn {
+            opacity: 1; 
+        }
+
+        /* --- MODAL (VIEWER) STYLES - FULL SCREEN FIX --- */
+        .modal {
+            display: none;
+            position: fixed; 
+            z-index: 100;
+            padding: 0; 
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0,0,0,0.9);
+            overflow: hidden; 
+            display: flex; 
+            justify-content: center;
+            align-items: center;
+        }
+
+        .close {
+            position: absolute;
+            top: 15px;
+            right: 35px;
+            color: #f1f1f1;
+            font-size: 40px;
+            font-weight: bold;
+            transition: 0.3s;
+            cursor: pointer;
+            z-index: 102; 
+        }
+        
+        /* 🔄 Change Button Style (बॉटम में स्थानांतरित) */
+        .change-btn {
+            position: absolute;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            background-color: #007bff;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-weight: bold;
+            z-index: 101;
+        }
+
+        /* 🖼️ मीडिया तत्वों को पूरी स्क्रीन तक फैलाएँ (Aspect Ratio बनाए रखते हुए) */
+        #modalMedia, #modalVideo {
+             width: auto;
+             height: auto;
+             max-width: 100vw; 
+             max-height: 100vh; 
+             margin: 0; 
+             padding: 0;
+             object-fit: contain; 
+        }
+    </style>
+</head>
+<body onload="checkPassword()" oncontextmenu="return false;"> 
+    <header>
+        <h1>🔒 मेरी प्राइवेट मीडिया गैलरी</h1>
+    </header>
+
+    <div id="contentWrapper">
+        <main class="gallery-container" id="galleryContainer">
+        </main>
+    
+        <div id="myModal" class="modal">
+            <span class="close" onclick="closeModal()">&times;</span>
+            
+            <button class="change-btn" onclick="handleChangeClick()">🔄 Change Media URL</button>
+
+            <div id="modal-content-container">
+                <img id="modalMedia" class="modal-content" style="display: none;">
+                <video id="modalVideo" class="modal-content" controls style="display: none;"></video>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // **************************************************
+        // **** 🔑 1. अपने गुप्त पासवर्ड यहाँ सेट करें ****
+        // **************************************************
+        
+        // 🔑 1. वेब एक्सेस के लिए पासवर्ड
+        const WEB_PASSWORD = "yugeshwarlovenaina"; 
+        
+        // 🗑️ 2. फ़ोटो डिलीट करने के लिए अलग पासवर्ड
+        const DELETE_PASSWORD = "yugeshwar@2008"; 
+        
+        // ⬇️ 3. डाउनलोड करने के लिए अलग पासवर्ड (नया जोड़ा गया)
+        const DOWNLOAD_PASSWORD = "naina"; 
+        
+        // 💡 4. अपने पासवर्ड के लिए संकेत (HINT) यहाँ सेट करें
+        const PASSWORD_CUE = "yug❤nai"; 
+        
+        // 🔒 5. सुरक्षा सेटिंग्स
+        const MAX_ATTEMPTS = 5;
+        const LOCKOUT_DURATION_MS = 30 * 60 * 1000; 
+        // **************************************************
+
+        let loginAttempts = parseInt(localStorage.getItem('loginAttempts')) || 0;
+        let lockoutEndTime = parseInt(localStorage.getItem('lockoutEndTime')) || 0;
+        
+        let currentAsset = null;
+
+        function checkLockout() {
+            const now = new Date().getTime();
+            
+            if (now < lockoutEndTime) {
+                const timeLeft = Math.ceil((lockoutEndTime - now) / 60000); 
+                alert(`🔒 एक्सेस लॉक हो गया है। आपने बहुत बार गलत पासवर्ड दर्ज किया है। \n\nकृपया ${timeLeft} मिनट बाद पुनः प्रयास करें।`);
+                return true;
+            } else if (lockoutEndTime > 0 && now >= lockoutEndTime) {
+                loginAttempts = 0;
+                lockoutEndTime = 0;
+                localStorage.removeItem('loginAttempts');
+                localStorage.removeItem('lockoutEndTime');
+            }
+            return false; 
+        }
+
+        function checkPassword() {
+            if (checkLockout()) {
+                return;
+            }
+
+            let password = prompt(`कृपया गैलरी खोलने के लिए पासवर्ड दर्ज करें। \n\nसंकेत (Hint): ${PASSWORD_CUE}`);
+            
+            if (password === WEB_PASSWORD) {
+                loginAttempts = 0;
+                lockoutEndTime = 0;
+                localStorage.removeItem('loginAttempts');
+                localStorage.removeItem('lockoutEndTime');
+                
+                document.getElementById('contentWrapper').style.display = 'block'; 
+                loadGallery(); 
+            } else {
+                loginAttempts++;
+                localStorage.setItem('loginAttempts', loginAttempts);
+
+                if (loginAttempts >= MAX_ATTEMPTS) {
+                    lockoutEndTime = new Date().getTime() + LOCKOUT_DURATION_MS;
+                    localStorage.setItem('lockoutEndTime', lockoutEndTime);
+                    checkLockout(); 
+                } else {
+                    const remainingAttempts = MAX_ATTEMPTS - loginAttempts;
+                    alert(`गलत पासवर्ड! आपको एक्सेस denied है। \n\nशेष प्रयास: ${remainingAttempts} (5 के बाद 30 मिनट का लॉकआउट)`);
+                }
+            }
+        }
+        
+        function determineType(url) {
+            const extension = url.split('.').pop().toLowerCase();
+            if (['jpg', 'jpeg', 'png', 'gif', 'webp'].includes(extension)) {
+                return 'image';
+            } else if (['mp4', 'mov', 'webm', 'ogg', '3gp'].includes(extension) || url.includes('.mp4')) {
+                return 'video';
+            }
+            return 'image'; 
+        }
+
+        const galleryContainer = document.getElementById('galleryContainer');
+        const modal = document.getElementById("myModal");
+        const modalMedia = document.getElementById("modalMedia");
+        const modalVideo = document.getElementById("modalVideo");
+
+
+        window.handleChangeClick = function() {
+            if (!currentAsset) return;
+
+            const newUrl = prompt(`वर्तमान URL बदलें:\n\nवर्तमान: ${currentAsset.url}\n\nनया URL दर्ज करें:`);
+            
+            if (newUrl && newUrl.trim() !== "") {
+                const newType = determineType(newUrl);
+                
+                const thumbnail = document.querySelector(`.gallery-item[data-url="${currentAsset.url}"]`);
+                if (thumbnail) {
+                    const oldMedia = thumbnail.querySelector('img, video');
+                    if (oldMedia) oldMedia.remove();
+
+                    let newMediaElement;
+                    if (newType === 'image') {
+                        newMediaElement = document.createElement('img');
+                        newMediaElement.src = newUrl;
+                        newMediaElement.alt = 'Gallery Image';
+                    } else { 
+                        newMediaElement = document.createElement('video');
+                        newMediaElement.src = newUrl;
+                        newMediaElement.controls = false;
+                        newMediaElement.preload = 'metadata';
+                    }
+
+                    const downloadBtn = thumbnail.querySelector('.download-btn');
+                    thumbnail.insertBefore(newMediaElement, downloadBtn);
+                    
+                    // Note: डाउनलोड बटन के href को बाद में हैंडल किया जाता है
+                    downloadBtn.download = newUrl.split('/').pop();
+                    downloadBtn.setAttribute('data-url', newUrl); // URL को data attribute में स्टोर करें
+
+                    thumbnail.setAttribute('data-url', newUrl);
+                    
+                    openModal(newUrl, newType, thumbnail); 
+                    
+                    alert("मीडिया URL सफलतापूर्वक अपडेट किया गया।");
+
+                } else {
+                    alert("त्रुटि: गैलरी में मूल आइटम नहीं मिला।");
+                }
+            }
+        };
+
+        function createGalleryItem(asset) {
+            const item = document.createElement('div');
+            item.classList.add('gallery-item');
+            item.setAttribute('data-url', asset.url); 
+            
+            item.addEventListener('click', function(event) {
+                if (!event.target.classList.contains('download-btn') && !event.target.classList.contains('delete-btn')) {
+                    openModal(asset.url, asset.type, item);
+                }
+            }); 
+
+            let mediaElement;
+            if (asset.type === 'image') {
+                mediaElement = document.createElement('img');
+                mediaElement.src = asset.url;
+                mediaElement.alt = 'Gallery Image';
+            } else if (asset.type === 'video') {
+                mediaElement = document.createElement('video');
+                mediaElement.src = asset.url;
+                mediaElement.controls = false;
+                mediaElement.preload = 'metadata'; 
+            }
+            
+            // ⬇️ डाउनलोड बटन: href को हटाएँ, onclick इवेंट का उपयोग करें
+            const downloadBtn = document.createElement('a');
+            downloadBtn.classList.add('download-btn');
+            downloadBtn.textContent = '↓ Download';
+            downloadBtn.setAttribute('data-url', asset.url); // फ़ाइल URL को स्टोर करें
+            downloadBtn.download = asset.url.split('/').pop(); 
+            
+            // **** 🎯 डाउनलोड लॉजिक (DOWNLOAD_PASSWORD का उपयोग करता है) ****
+            downloadBtn.onclick = function(e) {
+                // e.preventDefault() का उपयोग करें ताकि डिफ़ॉल्ट डाउनलोड क्रिया न हो
+                e.preventDefault(); 
+                
+                const downloadPassword = prompt("डाउनलोड करने के लिए पासवर्ड दर्ज करें:");
+                
+                if (downloadPassword === DOWNLOAD_PASSWORD) {
+                    // ✅ पासवर्ड सही: एक अस्थायी a टैग बनाएं और डाउनलोड शुरू करें
+                    alert("डाउनलोड शुरू हो रहा है...");
+                    const tempLink = document.createElement('a');
+                    tempLink.href = asset.url;
+                    tempLink.download = asset.url.split('/').pop();
+                    document.body.appendChild(tempLink);
+                    tempLink.click();
+                    document.body.removeChild(tempLink);
+                    
+                } else {
+                    // ❌ पासवर्ड गलत
+                    alert("❌ गलत पासवर्ड! डाउनलोड की अनुमति नहीं है।"); 
+                }
+            };
+            // **********************************************
+            
+            const deleteBtn = document.createElement('button');
+            deleteBtn.classList.add('delete-btn');
+            deleteBtn.textContent = '✖️ Delete';
+            
+            // **** 🎯 डिलीट लॉजिक (DELETE_PASSWORD का उपयोग करता है) ****
+            deleteBtn.onclick = function(e) {
+                const deletePassword = prompt("सुरक्षित रूप से हटाने के लिए पासवर्ड दर्ज करें:");
+                
+                if (deletePassword === DELETE_PASSWORD) {
+                    if (confirm(`क्या आप वाकई इस आइटम को स्क्रीन से हटाना चाहते हैं?\n${asset.url.split('/').pop()}`)) {
+                        item.remove(); 
+                        console.log(`Item deleted from screen: ${asset.url.split('/').pop()}`);
+                    }
+                } else {
+                    alert("❌ गलत पासवर्ड! आइटम हटाया नहीं गया।"); 
+                }
+            };
+            // **********************************************
+
+            item.appendChild(mediaElement);
+            item.appendChild(downloadBtn);
+            item.appendChild(deleteBtn);
+            
+            return item;
+        }
+
+        window.openModal = function(url, type, itemElement) {
+            currentAsset = { url: url, type: type, element: itemElement }; 
+
+            modal.style.display = "flex"; 
+            modalMedia.style.display = "none";
+            modalVideo.style.display = "none";
+            modalVideo.pause();
+
+            if (type === 'image') {
+                modalMedia.src = url;
+                modalMedia.style.display = "block";
+            } else if (type === 'video') {
+                modalVideo.src = url;
+                modalVideo.style.display = "block";
+                modalVideo.load();
+            }
+        }
+
+        window.closeModal = function() {
+            modal.style.display = "none";
+            modalVideo.pause();
+            currentAsset = null;
+        }
+        
+        window.onclick = function(event) {
+            if (event.target == modal) {
+                closeModal();
+            }
+        }
+        
+        document.addEventListener('keydown', function(event) {
+            if (event.key === 'F12' || (event.ctrlKey && event.shiftKey && event.key === 'I')) {
+                event.preventDefault();
+                alert("सुरक्षा कारणों से डेवलपर टूल्स को रोका गया है।");
+                return;
+            }
+            
+            if ((event.ctrlKey || event.metaKey) && (event.key === 's' || event.key === 'p')) {
+                event.preventDefault();
+                alert("सुरक्षा प्रतिबंधों के कारण यह क्रिया प्रतिबंधित है।");
+            }
+            
+            if (event.key === "Escape") {
+                closeModal();
+            }
+        });
+
+        function loadGallery() {
+            // **आपकी 100+ फ़ाइल पाथ्स की सूची यहाँ है:**
+            const rawFilePaths = [
+                "asset/IMG20251110182531.jpg", "asset/IMG20251112174716.jpg",
+                "asset/VID20251112174729.mp4", "asset/IMG20251112174721.jpg", 
+                "asset/video_20251020_215410.mp4", "asset/IMG20251116101803.jpg", 
+                "asset/IMG20251116101805.jpg", "asset/VID-20250609-WA0001.mp4",
+                "asset/IMG20251116101814_01.jpg", "asset/IMG20251116101815.jpg", 
+                "asset/IMG20251116102018.jpg", "asset/IMG20251116102032.jpg", 
+                "asset/IMG20251116102040.jpg", "asset/IMG20251116102132_BURST000_COVER.jpg",
+                "asset/IMG20251116102135.jpg", "asset/pencil_sketch~2.jpg",
+                "asset/Screenshot_2025-10-10-10-21-39-82_1c337646f29875672b5a61192b9010f9.jpg", 
+                "asset/Screenshot_2025-10-19-15-01-54-21_6012fa4d4ddec268fc5c7112cbb265e7.jpg",
+                "asset/Screenshot_2025-10-20-23-24-37-99_1c337646f29875672b5a61192b9010f9.jpg",
+                "asset/Screenshot_2025-10-21-20-58-10-79_99c04817c0de5652397fc8b56c3b3817.jpg",
+                "asset/Screenshot_2025-10-23-11-21-25-41_1c337646f29875672b5a61192b9010f9.jpg",
+                "asset/SnapInsta.to_AQPpDQSR820xEZSxxycfmghW5DIlfMttTYuaZZ75__5sO88CRlXl4JesYKxem5e5XP0jHcPtipV1oIkZ0EPKQWB1X6ofK_3UbiiO4ZI.mp4",
+                "asset/VID_20251110_225648_631.mp4",
+                "asset/VID20251112175219.mp4",
+                "asset/video_20251020_220703_6998819945583943850.mp4",
+                "asset/YouCut_20251111_122058854.mp4", 
+                "asset/1762849550531.jpg",
+                "asset/IMG_20251116_110924_834.webp",
+                "asset/IMG20251110182531.jpg", "asset/IMG20251112174716.jpg",
+                "asset/IMG20251112174719_BURST000_COVER.jpg", 
+                "asset/IMG20251112174721.jpg", 
+                "asset/IMG20251116101254.jpg", "asset/IMG20251116101803.jpg", 
+                "asset/IMG20251116101805.jpg", "asset/IMG20251116101814.jpg", 
+                "asset/IMG20251116101814_01.jpg", "asset/IMG20251116101815.jpg", 
+                "asset/IMG20251116102018.jpg", "asset/IMG20251116102032.jpg", 
+                "asset/IMG20251116102040.jpg", "asset/IMG20251116102132_BURST000_COVER.jpg",
+                "asset/IMG20251116102135.jpg", "asset/pencil_sketch~2.jpg",
+                "asset/Screenshot_2025-10-10-10-21-39-82_1c337646f29875672b5a61192b9010f9.jpg", 
+                "asset/Screenshot_2025-10-19-15-01-54-21_6012fa4d4ddec268fc5c7112cbb265e7.jpg",
+                "asset/Screenshot_2025-10-20-23-24-37-99_1c337646f29875672b5a61192b9010f9.jpg",
+                "asset/Screenshot_2025-10-21-20-58-10-79_99c04817c0de5652397fc8b56c3b3817.jpg",
+                "asset/Screenshot_2025-10-23-11-21-25-41_1c337646f29875672b5a61192b9010f9.jpg",
+                "asset/Screenshot_2025-11-10-21-34-20-87_1c337646f29875672b5a61192b9010f9.jpg",
+                "asset/Screenshot_2025-11-10-21-35-04-62_1c337646f29875672b5a61192b9010f9.jpg",
+                "asset/Screenshot_2025-11-12-15-15-09-24_c2c39eb77ce131054e1b7fd47705651e.jpg",
+                "asset/Screenshot_2025-11-12-17-07-38-10_1c337646f29875672b5a61192b9010f9.jpg",
+                "asset/Screenshot_2025-11-16-10-39-19-27_1c337646f29875672b5a61192b9010f9.jpg",
+                "asset/Screenshot_2025-11-16-10-49-21-77_1c337646f29875672b5a61192b9010f9.jpg",
+                "asset/Screenshot_2025-11-16-10-49-33-79_1c337646f29875672b5a61192b9010f9.jpg", 
+                "asset/Screenshot_20240523-162959.png",
+                "asset/Screenshot_20250208-110417.jpg", 
+                "asset/Screenshot_20250208-110417.png", 
+                "asset/Screenshot_20250208-110426.png", 
+                "asset/Screenshot_20250215-220116.png", 
+                "asset/Snapchat-1555021209.jpg",
+                "asset/SnapInsta.to_AQPpDQSR820xEZSxxycfmghW5DIlfMttTYuaZZ75__5sO88CRlXl4JesYKxem5e5XP0jHcPtipV1oIkZ0EPKQWB1X6ofK_3UbiiO4ZI.mp4",
+                "asset/VID_20251110_225648_631.mp4", 
+                "asset/VID-20250609-WA0001.mp4",
+                "asset/VID-20251008-WA0000.mp4",
+                "asset/VID20250810205608.mp4", 
+                "asset/VID20251112174729.mp4",
+                "asset/VID20251112175219.mp4",
+                "asset/video_20251020_215410.mp4",
+                "asset/video_20251020_215530.mp4",
+                "asset/video_20251020_215704.mp4",
+                "asset/video_20251020_220613.mp4",
+                "asset/video_20251020_220644.mp4",
+                "asset/video_20251020_220703.mp4",
+                "asset/video_20251020_220703_6998819945583943850.mp4",
+                "asset/YouCut_20251021_110550799.mp4",
+                "asset/YouCut_20251021_230556152.mp4",
+                "asset/YouCut_20251111_122058854.mp4", 
+                "asset/1000012397.png",
+                "asset/1000012454.png",
+                "asset/1762839675123.jpg",
+                "asset/1762839875623.jpg",
+                "asset/1762840117183.jpg",
+                "asset/1762846005760.jpg", 
+                "asset/1762849389590.jpg",
+                "asset/1762849442809.jpg", 
+                "asset/1762849550531.jpg",
+                "asset/1762865843813.jpg", 
+                "asset/1762865874538.jpg", 
+                "asset/1762866084508.jpg",
+                "asset/1762866272832.jpg", 
+                "asset/1762917759441.jpg", 
+                "asset/1762940160097.jpg", 
+                "asset/1762940290003.jpg", 
+                "asset/IMG_20231001_103815.png", 
+                "asset/IMG_20250208_154343_330.webp",
+                "asset/IMG_20250221_165228.jpg",
+                "asset/IMG_20250430_070659.jpg",
+                "asset/IMG_20250514_233428_758.webp",
+                "asset/IMG_20250913_194138.jpg",
+                "asset/IMG_20251021_211724.jpg",
+                "asset/IMG_20251021_211724_3527799425325516696.jpg",
+                "asset/IMG_20251021_211811.jpg",
+                "asset/IMG_20251021_211904(1).jpg", 
+                "asset/IMG_20251021_212005.jpg",
+                "asset/IMG_20251023_210204_272.webp", 
+                "asset/IMG_20251023_210346_805.webp", 
+                "asset/IMG_20251103_183701.png", 
+                "asset/IMG_20251111_110712.jpg",
+                "asset/IMG_20251111_110738.jpg", 
+                "asset/IMG_20251111_163151.jpg", 
+                "asset/IMG_20251111_165015_278.webp", 
+                "asset/IMG_20251111_183804.jpg",
+                "asset/IMG_20251112_100918_357.webp",
+                "asset/IMG_20251112_101013_406.webp", 
+                "asset/IMG_20251112_152048.jpg",
+                "asset/IMG_20251113_221237.jpg",
+                "asset/IMG_20251115_212501.jpg", 
+                "asset/IMG_20251116_104759.jpg", 
+                "asset/IMG_20251116_110924_834.webp",
+                "asset/IMG-20250328-WA0000.jpg",
+                "asset/IMG20250604143143.jpg",
+                "asset/IMG20250606144528.jpg", 
+                "asset/IMG20250606144557.jpg", 
+                "asset/IMG20250606144601.jpg", 
+                "asset/IMG20250606144629.jpg", 
+                "asset/IMG20250608183125.jpg", 
+                "asset/IMG20250609154241.jpg", 
+                "asset/IMG20250609154243.jpg", 
+                "asset/IMG20250609154310.jpg", 
+                "asset/IMG20250609154315.jpg", 
+                "asset/IMG20250609154543.jpg", 
+                "asset/IMG20250609165819.jpg", 
+                "asset/IMG20250609165823.jpg", 
+                "asset/IMG20250609165833.jpg", 
+                "asset/IMG20250609165838.jpg", 
+                "asset/IMG20250902165932.jpg", 
+                "asset/IMG20250902165934.jpg", 
+                "asset/IMG20250902165935.jpg", 
+                "asset/IMG20250904170025.jpg", 
+                "asset/IMG20250904170040.jpg", 
+                "asset/IMG20250913193348.jpg", 
+                "asset/IMG20250913193353.jpg", 
+                "asset/IMG20250917091149.jpg", 
+                "asset/IMG20251010220001.jpg", 
+                "asset/IMG20251026201353.jpg", 
+                "asset/IMG20251026201822.jpg", 
+                "asset/IMG20251026201850.jpg", 
+                "asset/IMG20251110182317.jpg", 
+                "asset/IMG20251110182530.jpg",
+                "asset 1/IMG20250902165931.jpg",
+                "asset 1/pencilsketchadjusted-2909238.jpg", 
+                "asset/pencilsketchadjusted-3757416.jpg", 
+                "asset/1000012492-removebg-preview.png", 
+                "asset 1/1000126023.jpg",
+                "asset/IMG20250401100321.jpg", 
+                "asset 1/IMG20250401100428.jpg",
+                "asset/IMG20250401100430.jpg",
+                "asset/IMG20250401100623.jpg",
+                "asset/IMG20250401100625.jpg",
+                "asset/IMG20250401100947.jpg"
+            ];
+
+            const mediaAssets = rawFilePaths.map(url => ({
+                url: url,
+                type: determineType(url)
+            }));
+
+            mediaAssets.forEach(asset => {
+                const item = createGalleryItem(asset);
+                galleryContainer.appendChild(item);
+            });
+        }
+    </script>
+</body>
+</html>
